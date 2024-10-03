@@ -1,15 +1,16 @@
 package handlers
 
 import (
-	"encoding/json"
 	"fmt"
 	"net/http"
 	"strings"
 	"time"
 
+	"github.com/MeherKandukuri/studioClasses_API/helpers"
 	"github.com/MeherKandukuri/studioClasses_API/models"
 )
 
+// struct to hold payload from postrequest for creating class
 type CreateClassRequest struct {
 	ClassName string `json:"class_name"`
 	StartDate string `json:"start_date"`
@@ -17,32 +18,39 @@ type CreateClassRequest struct {
 	Capacity  int    `json:"capacity"`
 }
 
+// struct to hold payload from postrequest for creating Booking
 type BookingRequest struct {
 	Name string `json:"name"`
 	Date string `json:"date"`
 }
 
+// initializing
 var bookings = make(map[string][]string)
 var classStorage = make(map[time.Time]models.Class)
 
+// Handler for postrequest for creating classes
 func PostCreateClass(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "Used wrong request Method type to access this function", http.StatusMethodNotAllowed)
+	// validating whether we got the right access method
+	if !helpers.ValidateRequestMethod(w, r, http.MethodPost) {
 		return
 	}
 
 	var req CreateClassRequest
 
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "Invalid request payload", http.StatusBadRequest)
+	// loading the payload to variable for futher processing
+	if !helpers.DecodeJSONPayload(w, r, &req) {
 		return
 	}
 
-	if req.ClassName == "" || req.StartDate == "" || req.EndDate == "" || req.Capacity <= 0 {
-		http.Error(w, "Entered, Missing or invalid fields.", http.StatusBadRequest)
+	// This function helps in validating the request.
+	// we can check if the user did not enter any required field by comparing it to zero value of that particular field.
+	// currently we validate only for zeros by adding "CheckZeroValue" to our checkstoBeDone slice
+	checksToBeDone := []string{"checkZeroValue"}
+	if !helpers.ValidateRequiredFields(w, req, checksToBeDone) {
 		return
 	}
 
+	//parsing dates
 	startDate, err := time.Parse("2006-01-02", req.StartDate)
 	if err != nil {
 		http.Error(w, "Invalid start date format", http.StatusBadRequest)
@@ -54,9 +62,11 @@ func PostCreateClass(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Invalid endDate format", http.StatusBadRequest)
 		return
 	}
-	// normalizing dates:
-	startDate, endDate = normalizeDate(startDate), normalizeDate(endDate)
 
+	// normalizing dates to a standard format
+	startDate, endDate = helpers.NormalizeDate(startDate), helpers.NormalizeDate(endDate)
+
+	// check if the dates entered are valid
 	if startDate.After(endDate) {
 		http.Error(w, "start date cannot be after end date", http.StatusBadRequest)
 		return
@@ -69,6 +79,7 @@ func PostCreateClass(w http.ResponseWriter, r *http.Request) {
 		Capacity:  req.Capacity,
 	}
 
+	// If there is a class on that we cannot create one as we have only one class per day
 	currentDate := startDate
 	for !currentDate.After(endDate) {
 		if _, exists := classStorage[currentDate]; exists {
@@ -85,55 +96,65 @@ func PostCreateClass(w http.ResponseWriter, r *http.Request) {
 		classStorage[currentDate] = class
 		currentDate = currentDate.AddDate(0, 0, 1)
 	}
+	// success message of creating a class
+	message := fmt.Sprintf("created %s classes between %s and %s with Capacity: %d",
+		class.ClassName, startDate.Format("2006-01-02"), endDate.Format("2006-01-02"), class.Capacity)
 
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusCreated)
-
-	if err := json.NewEncoder(w).Encode(map[string]string{"message": "Class created successfully"}); err != nil {
-		http.Error(w, "Failed to encode response", http.StatusInternalServerError)
-		return
-	}
+	helpers.WriteJSONResponse(w, message, http.StatusCreated)
 
 }
 
+// Handler for Booking a class
 func PostCreateBooking(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "Used wrong request method type to access this function", http.StatusMethodNotAllowed)
+	// validating whether we got the right access method
+	if !helpers.ValidateRequestMethod(w, r, http.MethodPost) {
 		return
 	}
 
+	// variable to hold the req data
 	var reqBooking BookingRequest
 
-	if err := json.NewDecoder(r.Body).Decode(&reqBooking); err != nil {
-		http.Error(w, "invalid request payload", http.StatusBadRequest)
+	// loading the payload to variable for futher processing
+	if !helpers.DecodeJSONPayload(w, r, &reqBooking) {
 		return
 	}
 
-	if reqBooking.Name == "" || reqBooking.Date == "" {
-		http.Error(w, "Missing required fields: name or date or both", http.StatusBadRequest)
+	// This function helps in validating the request.
+	// we can check if the user did not enter any required field by comparing it to zero value of that particular field.
+	// currently we validate only for zeroValues by adding "CheckZeroValue" to our checkstoBeDone slice
+	checksToBeDone := []string{"checkZeroValue"}
+	if !helpers.ValidateRequiredFields(w, reqBooking, checksToBeDone) {
 		return
 	}
 
+	// parsing date
 	date, err := time.Parse("2006-01-02", reqBooking.Date)
 	if err != nil {
 		http.Error(w, "invalid date format", http.StatusBadRequest)
 		return
 	}
-	date = normalizeDate(date)
+
+	// standardising the date for ease of comparision
+	date = helpers.NormalizeDate(date)
 	datestr := date.Format("2006-01-02")
 
+	// make sure we have a class on that date
 	if _, found := classStorage[date]; !found {
 		http.Error(w, "We don't have a class on this day", http.StatusBadRequest)
 		return
 	}
 
+	// creating a struct for writing json response and storing to our in memory storage
 	booking := models.Booking{
 		Name: reqBooking.Name,
 		Date: date,
 	}
-	// This check is done considering there is only one person with one name. We can achieve this functionality using unique id.
+
+	// This check is done assuming there is only one name for one person.
+	// later on We can achieve this functionality using unique user ID to make sure that all the bookings arent done by one person
 	namesInClass := bookings[datestr]
 	username := strings.ToLower(booking.Name)
+
 	for _, name := range namesInClass {
 		if strings.ToLower(name) == username {
 			http.Error(w, "You have already enrolled into class", http.StatusConflict)
@@ -141,18 +162,11 @@ func PostCreateBooking(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// appending to our bookings cache
 	bookings[datestr] = append(bookings[datestr], booking.Name)
 
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusCreated)
-
+	//writing to our response with a confirmation message
 	message := fmt.Sprintf("%s has been enrolled for class on %s", booking.Name, datestr)
-	if err := json.NewEncoder(w).Encode(map[string]string{"message": message}); err != nil {
-		http.Error(w, "Failed to encode response", http.StatusInternalServerError)
-		return
-	}
-}
+	helpers.WriteJSONResponse(w, message, http.StatusCreated)
 
-func normalizeDate(t time.Time) time.Time {
-	return time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, time.UTC)
 }

@@ -11,15 +11,18 @@ const portNumber = ":8080"
 
 func main() {
 	log.Println("We are starting on port number:", portNumber)
-	router := routes.Routes()
-	server := &http.Server{
-		Addr:    portNumber,
-		Handler: router,
-	}
-
-	
+	server := run()
 	err := server.ListenAndServe()
 	if err != nil {
 		log.Fatalln(err)
+	}
+}
+
+// setting up server with handler
+func run() *http.Server {
+	router := routes.Routes()
+	return &http.Server{
+		Addr:    portNumber,
+		Handler: router,
 	}
 }
